@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "pattern": "^([0-9a-f-]+-netseer-ipaddr-assoc)\\.xz\\.fbcdn\\.net$"
+    },
+    {
+      "pattern": "^([0-9a-f-]+-netseer-ipaddr-assoc)\\.xy\\.fbcdn\\.net$"
+    },
+    {
+      "pattern": "^([0-9a-f]+)\\.safeframe\\.googlesyndication\\.com$"
+    }
+  ]
+}
