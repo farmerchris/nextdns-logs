@@ -47,19 +47,22 @@ Override config path with `NEXTDNS_LOGS_CONFIG`.
 
 ## Scripts
 
-### `list_profiles.py`
+### `profiles.py`
 
 List available profiles for your account.
 
 ```bash
-./list_profiles.py
+./profiles.py
 ```
 
-### `blocked_domains.py`
+### `domains.py`
 
-Show blocked domains ranked by query count.
+Show domains ranked by query count.
 
 - If `--profile` is omitted, runs for all profiles in API order.
+- `--blocked` filters to blocked.
+- `--allowed` filters to allowed (includes both `default` and explicit `allowed` statuses).
+- If neither flag is set, shows both blocked and allowed.
 - Supports collapse rules (`collapse_rules.json`) to aggregate noisy hostnames.
 - Shows progress on stderr and updates the same line while paging.
 
@@ -67,19 +70,19 @@ Examples:
 
 ```bash
 # One profile, last day (default)
-./blocked_domains.py --profile abc123
+./domains.py --profile abc123 --blocked
 
 # All profiles, custom range
-./blocked_domains.py --from 7d --to now
+./domains.py --from 7d --to now
 
 # New domains in last hour (default window is 1h)
-./blocked_domains.py --profile abc123 --from 7d --new
+./domains.py --profile abc123 --from 7d --new
 
 # New domains in last 6h
-./blocked_domains.py --profile abc123 --from 7d --new 6h
+./domains.py --profile abc123 --from 7d --new 6h
 
 # Disable collapsing
-./blocked_domains.py --profile abc123 --no-collapse
+./domains.py --profile abc123 --no-collapse
 ```
 
 Notes:
@@ -142,7 +145,7 @@ Options:
 
 ## Collapse rules
 
-`blocked_domains.py` reads rules from `collapse_rules.json` by default.
+`domains.py` reads rules from `collapse_rules.json` by default.
 
 Rules are pattern-only. Each regex must include at least one capture group.
 Matched capture groups are replaced with `*`.

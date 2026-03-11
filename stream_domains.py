@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from datetime import datetime
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional
 
 import requests
 
@@ -22,6 +23,12 @@ ANSI_GREEN = "\033[32m"
 ANSI_YELLOW = "\033[33m"
 ANSI_CYAN = "\033[36m"
 ANSI_DIM = "\033[2m"
+
+
+class RateLimitError(RuntimeError):
+    def __init__(self, message: str, retry_after: Optional[float] = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class SSEEvent:
@@ -140,12 +147,12 @@ def print_event(entry: Dict, seen_domains: set[str], use_color: bool) -> None:
     print(" | ".join(part for part in parts if part))
 
 
-def open_stream(
-    profile_id: str, api_key: str, last_id: Optional[str]
-) -> requests.Response:
+def open_stream(profile_id: str, api_key: str, last_id: Optional[str]) -> requests.Response:
     params: Dict[str, str] = {}
     if last_id:
         params["id"] = last_id
+    # Use raw logs by default (no dedupe/filtering).
+    params["raw"] = "1"
 
     url = f"{API_BASE}/profiles/{profile_id}/logs/stream"
     resp = requests.get(
@@ -155,6 +162,18 @@ def open_stream(
         timeout=90,
         stream=True,
     )
+    if resp.status_code == 429:
+        retry_after: Optional[float] = None
+        retry_after_header = resp.headers.get("Retry-After", "").strip()
+        if retry_after_header:
+            try:
+                retry_after = float(retry_after_header)
+            except ValueError:
+                retry_after = None
+        raise RateLimitError(
+            f"HTTP 429 from NextDNS API: {resp.text.strip()}",
+            retry_after=retry_after,
+        )
     if resp.status_code != 200:
         raise RuntimeError(
             f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
@@ -163,19 +182,24 @@ def open_stream(
 
 
 def stream_loop(
-    profile_id: str, api_key: str, last_id: Optional[str], use_color: bool
+    profile_id: str,
+    api_key: str,
+    last_id: Optional[str],
+    use_color: bool,
 ) -> None:
     seen_domains: set[str] = set()
-    reconnect_delay = 1
+    reconnect_delay = 2.0
+    max_reconnect_delay = 120.0
+    stable_reset_seconds = 30.0
 
     while True:
         try:
             sys.stderr.write("\r[stream] connecting...\n")
             sys.stderr.flush()
+            connected_at = time.monotonic()
             with open_stream(profile_id, api_key, last_id) as resp:
                 sys.stderr.write("\r[stream] connected. Press Ctrl+C to stop.\n")
                 sys.stderr.flush()
-                reconnect_delay = 1
                 for event in sse_events(resp):
                     if event.event_id:
                         last_id = event.event_id
@@ -191,17 +215,34 @@ def stream_loop(
 
                     print_event(entry, seen_domains, use_color)
 
+            connection_lifetime = time.monotonic() - connected_at
+            if connection_lifetime >= stable_reset_seconds:
+                reconnect_delay = 2.0
+            else:
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+
             sys.stderr.write("\r[stream] disconnected, reconnecting...\n")
             sys.stderr.flush()
+            time.sleep(reconnect_delay + random.uniform(0, 1.0))
         except KeyboardInterrupt:
             raise
-        except Exception as exc:
+        except RateLimitError as exc:
+            base = exc.retry_after if exc.retry_after is not None else reconnect_delay
+            sleep_for = max(base, reconnect_delay, 5.0)
+            sleep_for = min(sleep_for, max_reconnect_delay)
             sys.stderr.write(
-                f"\r[stream] error: {exc}; retrying in {reconnect_delay}s\n"
+                f"\r[stream] rate limited; retrying in {sleep_for:.1f}s\n"
             )
             sys.stderr.flush()
-            time.sleep(reconnect_delay)
-            reconnect_delay = min(reconnect_delay * 2, 15)
+            time.sleep(sleep_for + random.uniform(0, 1.0))
+            reconnect_delay = min(max(reconnect_delay * 2, sleep_for), max_reconnect_delay)
+        except Exception as exc:
+            sys.stderr.write(
+                f"\r[stream] error: {exc}; retrying in {reconnect_delay:.1f}s\n"
+            )
+            sys.stderr.flush()
+            time.sleep(reconnect_delay + random.uniform(0, 1.0))
+            reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
 
 def main() -> int:
