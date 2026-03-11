@@ -75,7 +75,9 @@ def fetch_oldest_blocked(
     resp = requests.get(url, headers={"X-Api-Key": api_key}, params=params, timeout=30)
 
     if resp.status_code != 200:
-        raise RuntimeError(f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}")
+        raise RuntimeError(
+            f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
+        )
 
     payload = resp.json()
     if payload.get("errors"):
@@ -109,7 +111,11 @@ def main() -> int:
         timestamp = entry.get("timestamp", "")
         status = entry.get("status", "")
         client_ip = entry.get("clientIp", "")
-        device_name = entry.get("device", {}).get("name", "") if isinstance(entry.get("device"), dict) else ""
+        device_name = (
+            entry.get("device", {}).get("name", "")
+            if isinstance(entry.get("device"), dict)
+            else ""
+        )
 
         print("Oldest blocked log entry")
         print("=" * 32)

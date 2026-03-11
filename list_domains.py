@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""List blocked domains for a NextDNS profile over a time window.
-
-Defaults to the last 24 hours and prints results sorted by blocked query count.
-"""
+"""List domains for a NextDNS profile over a time window."""
 
 from __future__ import annotations
 
@@ -20,11 +17,14 @@ API_BASE = "https://api.nextdns.io"
 RELATIVE_TIME_RE = re.compile(r"^\d+(?:[smhdwMy])$")
 NEGATIVE_RELATIVE_TIME_RE = re.compile(r"^-\d+(?:[smhdwMy])$")
 DEFAULT_COLLAPSE_RULES_PATH = Path(__file__).with_name("collapse_rules.json")
+ANSI_RESET = "\033[0m"
+ANSI_RED = "\033[31m"
+ANSI_GREEN = "\033[32m"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Show blocked domains for a NextDNS profile."
+        description="Show domains for a NextDNS profile."
     )
     parser.add_argument(
         "--profile",
@@ -58,13 +58,23 @@ def parse_args() -> argparse.Namespace:
         help="Ask API to aggregate by root domain when supported",
     )
     parser.add_argument(
+        "--blocked",
+        action="store_true",
+        help="Filter to blocked domains only",
+    )
+    parser.add_argument(
+        "--allowed",
+        action="store_true",
+        help="Filter to allowed domains only",
+    )
+    parser.add_argument(
         "--new",
         nargs="?",
         const="1h",
         default=None,
         metavar="WINDOW",
         help=(
-            "Show domains newly blocked in the recent WINDOW " "(default WINDOW: 1h)."
+            "Show domains new in the recent WINDOW (default WINDOW: 1h)."
         ),
     )
     parser.add_argument(
@@ -111,13 +121,15 @@ def list_profiles(api_key: str) -> List[Dict]:
     return payload.get("data", [])
 
 
-def fetch_blocked_domains(
+def fetch_domains(
     profile_id: str,
     api_key: str,
     from_time: str,
     to_time: str,
     limit: int,
     root: bool,
+    api_status: str,
+    output_status: str,
     progress_label: Optional[str] = None,
 ) -> List[Dict]:
     if not (1 <= limit <= 500):
@@ -141,7 +153,7 @@ def fetch_blocked_domains(
     while True:
         page += 1
         params = {
-            "status": "blocked",
+            "status": api_status,
             "from": from_time,
             "to": to_time,
             "limit": limit,
@@ -164,6 +176,8 @@ def fetch_blocked_domains(
             raise RuntimeError(f"API returned errors: {payload['errors']}")
 
         data = payload.get("data", [])
+        for row in data:
+            row["status"] = output_status
         rows.extend(data)
         progress_update(f"page {page}, got {len(data)} rows, total {len(rows)}")
 
@@ -176,24 +190,37 @@ def fetch_blocked_domains(
     return rows
 
 
-def print_table(rows: List[Dict], from_time: str, to_time: str) -> None:
-    print(f"Blocked domains from {from_time} to {to_time}")
+def status_text(value: str, use_color: bool) -> str:
+    if not use_color:
+        return value
+    if value == "blocked":
+        return f"{ANSI_RED}{value}{ANSI_RESET}"
+    if value == "allowed":
+        return f"{ANSI_GREEN}{value}{ANSI_RESET}"
+    return value
+
+
+def print_table(rows: List[Dict], from_time: str, to_time: str, label: str, use_color: bool) -> None:
+    print(f"{label} from {from_time} to {to_time}")
     print("=" * 72)
 
     if not rows:
-        print("No blocked domains found for the selected window.")
+        print("No domains found for the selected window.")
         return
 
     max_domain = max(len(item.get("domain", "")) for item in rows)
     domain_col = max(10, min(max_domain, 60))
 
-    print(f"{'#':>4}  {'Blocked':>10}  {'Domain':<{domain_col}}")
+    print(f"{'#':>4}  {'Queries':>10}  {'Status':<8}  {'Domain':<{domain_col}}")
     print("-" * 72)
 
     for idx, item in enumerate(rows, start=1):
         domain = item.get("domain", "")
         queries = item.get("queries", 0)
-        print(f"{idx:>4}  {queries:>10}  {domain:<{domain_col}}")
+        status = item.get("status", "")
+        print(
+            f"{idx:>4}  {queries:>10}  {status_text(status, use_color):<8}  {domain:<{domain_col}}"
+        )
 
 
 def load_collapse_rules(path: str) -> List[re.Pattern[str]]:
@@ -264,15 +291,18 @@ def collapse_rows(rows: List[Dict], rules: List[re.Pattern[str]]) -> List[Dict]:
     if not rules:
         return rows
 
-    totals: Dict[str, int] = {}
+    totals: Dict[tuple[str, str], int] = {}
     for row in rows:
         domain = row.get("domain", "")
+        status = row.get("status", "")
         queries = int(row.get("queries", 0))
         collapsed = collapse_domain(domain, rules)
-        totals[collapsed] = totals.get(collapsed, 0) + queries
+        key = (status, collapsed)
+        totals[key] = totals.get(key, 0) + queries
 
     collapsed_rows = [
-        {"domain": domain, "queries": queries} for domain, queries in totals.items()
+        {"status": status, "domain": domain, "queries": queries}
+        for (status, domain), queries in totals.items()
     ]
     collapsed_rows.sort(key=lambda item: item.get("queries", 0), reverse=True)
     return collapsed_rows
@@ -285,35 +315,52 @@ def find_new_domains(
     root: bool,
     from_time: str,
     new_window: str,
+    status_queries: List[Dict[str, str]],
     collapse_rules: List[re.Pattern[str]],
     progress_prefix: str = "",
 ) -> List[Dict]:
     recent_from = f"-{new_window.lstrip('-')}"
-    recent_rows = fetch_blocked_domains(
-        profile_id=profile_id,
-        api_key=api_key,
-        from_time=recent_from,
-        to_time="now",
-        limit=limit,
-        root=root,
-        progress_label=f"{progress_prefix}recent window".strip(),
-    )
-    baseline_rows = fetch_blocked_domains(
-        profile_id=profile_id,
-        api_key=api_key,
-        from_time=from_time,
-        to_time=recent_from,
-        limit=limit,
-        root=root,
-        progress_label=f"{progress_prefix}baseline window".strip(),
-    )
+    recent_rows: List[Dict] = []
+    baseline_rows: List[Dict] = []
+    for query in status_queries:
+        api_status = query["api_status"]
+        output_status = query["output_status"]
+        recent_rows.extend(
+            fetch_domains(
+                profile_id=profile_id,
+                api_key=api_key,
+                from_time=recent_from,
+                to_time="now",
+                limit=limit,
+                root=root,
+                api_status=api_status,
+                output_status=output_status,
+                progress_label=f"{progress_prefix}recent window [{api_status}]".strip(),
+            )
+        )
+        baseline_rows.extend(
+            fetch_domains(
+                profile_id=profile_id,
+                api_key=api_key,
+                from_time=from_time,
+                to_time=recent_from,
+                limit=limit,
+                root=root,
+                api_status=api_status,
+                output_status=output_status,
+                progress_label=f"{progress_prefix}baseline window [{api_status}]".strip(),
+            )
+        )
 
     baseline_domains = {
-        collapse_domain(row.get("domain", ""), collapse_rules) for row in baseline_rows
+        (row.get("status", ""), collapse_domain(row.get("domain", ""), collapse_rules))
+        for row in baseline_rows
     }
     recent_collapsed = collapse_rows(recent_rows, collapse_rules)
     new_rows = [
-        row for row in recent_collapsed if row.get("domain", "") not in baseline_domains
+        row
+        for row in recent_collapsed
+        if (row.get("status", ""), row.get("domain", "")) not in baseline_domains
     ]
     new_rows.sort(key=lambda item: item.get("queries", 0), reverse=True)
     return new_rows
@@ -327,6 +374,29 @@ def main() -> int:
         to_time = normalize_time_value(args.to_time)
         new_window = normalize_window_value(args.new) if args.new is not None else None
         api_key = resolve_api_key(args.api_key)
+        use_color = sys.stdout.isatty()
+        status_queries: List[Dict[str, str]]
+        if args.blocked and not args.allowed:
+            status_queries = [{"api_status": "blocked", "output_status": "blocked"}]
+        elif args.allowed and not args.blocked:
+            status_queries = [
+                {"api_status": "default", "output_status": "allowed"},
+                {"api_status": "allowed", "output_status": "allowed"},
+            ]
+        else:
+            status_queries = [
+                {"api_status": "blocked", "output_status": "blocked"},
+                {"api_status": "default", "output_status": "allowed"},
+                {"api_status": "allowed", "output_status": "allowed"},
+            ]
+
+        if args.blocked and not args.allowed:
+            status_label = "Blocked domains"
+        elif args.allowed and not args.blocked:
+            status_label = "Allowed domains"
+        else:
+            status_label = "Domains"
+
         collapse_rules: List[re.Pattern[str]] = []
         if not args.no_collapse:
             collapse_rules = load_collapse_rules(args.collapse_rules)
@@ -361,22 +431,38 @@ def main() -> int:
                     root=args.root,
                     from_time=from_time,
                     new_window=new_window,
+                    status_queries=status_queries,
                     collapse_rules=collapse_rules,
                     progress_prefix=f"({profile_id}) ",
                 )
-                print_table(rows, new_window, "now")
-            else:
-                rows = fetch_blocked_domains(
-                    profile_id=profile_id,
-                    api_key=api_key,
-                    from_time=from_time,
-                    to_time=to_time,
-                    limit=args.limit,
-                    root=args.root,
-                    progress_label=f"main window ({profile_id})",
+                window_label = new_window.lstrip("-")
+                print_table(
+                    rows,
+                    new_window,
+                    "now",
+                    f"New {status_label.lower()} in last {window_label} (baseline from {from_time})",
+                    use_color,
                 )
+            else:
+                rows: List[Dict] = []
+                for query in status_queries:
+                    api_status = query["api_status"]
+                    output_status = query["output_status"]
+                    rows.extend(
+                        fetch_domains(
+                            profile_id=profile_id,
+                            api_key=api_key,
+                            from_time=from_time,
+                            to_time=to_time,
+                            limit=args.limit,
+                            root=args.root,
+                            api_status=api_status,
+                            output_status=output_status,
+                            progress_label=f"main window ({profile_id}) [{api_status}]",
+                        )
+                    )
                 rows = collapse_rows(rows, collapse_rules)
-                print_table(rows, from_time, to_time)
+                print_table(rows, from_time, to_time, status_label, use_color)
 
             if idx < len(targets):
                 print()

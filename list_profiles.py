@@ -26,7 +26,9 @@ def fetch_profiles(api_key: str) -> List[Dict]:
     headers = {"X-Api-Key": api_key}
     resp = requests.get(f"{API_BASE}/profiles", headers=headers, timeout=30)
     if resp.status_code != 200:
-        raise RuntimeError(f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}")
+        raise RuntimeError(
+            f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
+        )
 
     payload = resp.json()
     if payload.get("errors"):

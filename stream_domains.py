@@ -98,7 +98,7 @@ def format_timestamp(ts: str) -> str:
 
 def print_event(entry: Dict, seen_domains: set[str], use_color: bool) -> None:
     status = entry.get("status", "")
-    if status not in {"allowed", "blocked"}:
+    if status not in {"default", "allowed", "blocked"}:
         return
 
     domain = entry.get("domain", "")
@@ -119,8 +119,13 @@ def print_event(entry: Dict, seen_domains: set[str], use_color: bool) -> None:
     is_new = domain not in seen_domains
     seen_domains.add(domain)
 
-    status_label = status.upper()
-    status_color = ANSI_GREEN if status == "allowed" else ANSI_RED
+    if status == "blocked":
+        status_label = "BLOCKED"
+        status_color = ANSI_RED
+    else:
+        # Treat both "default" and explicit "allowed" as allowed traffic.
+        status_label = "ALLOWED"
+        status_color = ANSI_GREEN
 
     parts = [
         colorize(timestamp, ANSI_CYAN, use_color),
@@ -135,7 +140,9 @@ def print_event(entry: Dict, seen_domains: set[str], use_color: bool) -> None:
     print(" | ".join(part for part in parts if part))
 
 
-def open_stream(profile_id: str, api_key: str, last_id: Optional[str]) -> requests.Response:
+def open_stream(
+    profile_id: str, api_key: str, last_id: Optional[str]
+) -> requests.Response:
     params: Dict[str, str] = {}
     if last_id:
         params["id"] = last_id
@@ -149,11 +156,15 @@ def open_stream(profile_id: str, api_key: str, last_id: Optional[str]) -> reques
         stream=True,
     )
     if resp.status_code != 200:
-        raise RuntimeError(f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}")
+        raise RuntimeError(
+            f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
+        )
     return resp
 
 
-def stream_loop(profile_id: str, api_key: str, last_id: Optional[str], use_color: bool) -> None:
+def stream_loop(
+    profile_id: str, api_key: str, last_id: Optional[str], use_color: bool
+) -> None:
     seen_domains: set[str] = set()
     reconnect_delay = 1
 
@@ -185,7 +196,9 @@ def stream_loop(profile_id: str, api_key: str, last_id: Optional[str], use_color
         except KeyboardInterrupt:
             raise
         except Exception as exc:
-            sys.stderr.write(f"\r[stream] error: {exc}; retrying in {reconnect_delay}s\n")
+            sys.stderr.write(
+                f"\r[stream] error: {exc}; retrying in {reconnect_delay}s\n"
+            )
             sys.stderr.flush()
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, 15)

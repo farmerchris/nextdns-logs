@@ -56,7 +56,9 @@ def request_json(
     )
 
     if resp.status_code != 200:
-        raise RuntimeError(f"{method} {path} failed (HTTP {resp.status_code}): {resp.text.strip()}")
+        raise RuntimeError(
+            f"{method} {path} failed (HTTP {resp.status_code}): {resp.text.strip()}"
+        )
 
     payload = resp.json()
     if payload.get("errors"):
@@ -93,12 +95,16 @@ def list_array_entries(api_key: str, profile_id: str, endpoint: str) -> List[Dic
     return entries
 
 
-def unblock_on_profile(api_key: str, profile_id: str, domain: str, dry_run: bool) -> Tuple[bool, List[str]]:
+def unblock_on_profile(
+    api_key: str, profile_id: str, domain: str, dry_run: bool
+) -> Tuple[bool, List[str]]:
     actions: List[str] = []
     changed = False
 
     allowlist = list_array_entries(api_key, profile_id, "allowlist")
-    existing_allow = next((entry for entry in allowlist if entry.get("id") == domain), None)
+    existing_allow = next(
+        (entry for entry in allowlist if entry.get("id") == domain), None
+    )
 
     if existing_allow is None:
         actions.append("add allowlist entry")
@@ -124,7 +130,9 @@ def unblock_on_profile(api_key: str, profile_id: str, domain: str, dry_run: bool
         actions.append("allowlist already active")
 
     denylist = list_array_entries(api_key, profile_id, "denylist")
-    existing_deny = next((entry for entry in denylist if entry.get("id") == domain), None)
+    existing_deny = next(
+        (entry for entry in denylist if entry.get("id") == domain), None
+    )
 
     if existing_deny is not None:
         actions.append("remove denylist entry")
@@ -156,7 +164,9 @@ def main() -> int:
             targets = [{"id": args.profile, "name": args.profile}]
         else:
             profiles = list_profiles(api_key)
-            targets = [{"id": p.get("id", ""), "name": p.get("name", "")} for p in profiles]
+            targets = [
+                {"id": p.get("id", ""), "name": p.get("name", "")} for p in profiles
+            ]
             targets = [t for t in targets if t["id"]]
 
         if not targets:
@@ -180,7 +190,9 @@ def main() -> int:
             if changed:
                 changed_count += 1
 
-            profile_label = f"{target['id']} ({target['name']})" if target["name"] else target["id"]
+            profile_label = (
+                f"{target['id']} ({target['name']})" if target["name"] else target["id"]
+            )
             print(f"{idx:>3}. {profile_label}")
             print("     - " + "; ".join(actions))
 
