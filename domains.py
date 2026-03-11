@@ -23,9 +23,7 @@ ANSI_GREEN = "\033[32m"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Show domains for a NextDNS profile."
-    )
+    parser = argparse.ArgumentParser(description="Show domains for a NextDNS profile.")
     parser.add_argument(
         "--profile",
         help="NextDNS profile ID (for example: abc123). If omitted, run for all profiles.",
@@ -73,9 +71,7 @@ def parse_args() -> argparse.Namespace:
         const="1h",
         default=None,
         metavar="WINDOW",
-        help=(
-            "Show domains new in the recent WINDOW (default WINDOW: 1h)."
-        ),
+        help=("Show domains new in the recent WINDOW (default WINDOW: 1h)."),
     )
     parser.add_argument(
         "--collapse-rules",
@@ -200,7 +196,9 @@ def status_text(value: str, use_color: bool) -> str:
     return value
 
 
-def print_table(rows: List[Dict], from_time: str, to_time: str, label: str, use_color: bool) -> None:
+def print_table(
+    rows: List[Dict], from_time: str, to_time: str, label: str, use_color: bool
+) -> None:
     print(f"{label} from {from_time} to {to_time}")
     print("=" * 72)
 

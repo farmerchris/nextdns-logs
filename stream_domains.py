@@ -103,10 +103,12 @@ def format_timestamp(ts: str) -> str:
         return ts
 
 
-def print_event(entry: Dict, seen_domains: set[str], use_color: bool) -> None:
+def format_event(
+    entry: Dict, seen_domains: set[str], use_color: bool
+) -> Optional[tuple[tuple[str, str, str], str]]:
     status = entry.get("status", "")
     if status not in {"default", "allowed", "blocked"}:
-        return
+        return None
 
     domain = entry.get("domain", "")
     timestamp = format_timestamp(entry.get("timestamp", ""))
@@ -144,10 +146,21 @@ def print_event(entry: Dict, seen_domains: set[str], use_color: bool) -> None:
     if is_new:
         parts.append(colorize("NEW", ANSI_YELLOW, use_color))
 
-    print(" | ".join(part for part in parts if part))
+    line = " | ".join(part for part in parts if part)
+    event_key = (status_label, domain, device)
+    return event_key, line
 
 
-def open_stream(profile_id: str, api_key: str, last_id: Optional[str]) -> requests.Response:
+def print_buffered_line(line: str, repeat_count: int) -> None:
+    if repeat_count > 1:
+        print(f"{line} x{repeat_count}")
+    else:
+        print(line)
+
+
+def open_stream(
+    session: requests.Session, profile_id: str, api_key: str, last_id: Optional[str]
+) -> requests.Response:
     params: Dict[str, str] = {}
     if last_id:
         params["id"] = last_id
@@ -155,7 +168,7 @@ def open_stream(profile_id: str, api_key: str, last_id: Optional[str]) -> reques
     params["raw"] = "1"
 
     url = f"{API_BASE}/profiles/{profile_id}/logs/stream"
-    resp = requests.get(
+    resp = session.get(
         url,
         headers={"X-Api-Key": api_key},
         params=params,
@@ -188,61 +201,105 @@ def stream_loop(
     use_color: bool,
 ) -> None:
     seen_domains: set[str] = set()
+    pending_key: Optional[tuple[str, str, str]] = None
+    pending_line: Optional[str] = None
+    pending_count = 0
     reconnect_delay = 2.0
     max_reconnect_delay = 120.0
     stable_reset_seconds = 30.0
 
-    while True:
-        try:
-            sys.stderr.write("\r[stream] connecting...\n")
-            sys.stderr.flush()
-            connected_at = time.monotonic()
-            with open_stream(profile_id, api_key, last_id) as resp:
-                sys.stderr.write("\r[stream] connected. Press Ctrl+C to stop.\n")
+    with requests.Session() as session:
+        while True:
+            try:
+                sys.stderr.write("\r[stream] connecting...\n")
                 sys.stderr.flush()
-                for event in sse_events(resp):
-                    if event.event_id:
-                        last_id = event.event_id
+                connected_at = time.monotonic()
+                with open_stream(session, profile_id, api_key, last_id) as resp:
+                    sys.stderr.write("\r[stream] connected. Press Ctrl+C to stop.\n")
+                    sys.stderr.flush()
+                    for event in sse_events(resp):
+                        if event.event_id:
+                            last_id = event.event_id
 
-                    payload = event.payload()
-                    if not payload:
-                        continue
+                        payload = event.payload()
+                        if not payload:
+                            continue
 
-                    try:
-                        entry = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
+                        try:
+                            entry = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
 
-                    print_event(entry, seen_domains, use_color)
+                        formatted = format_event(entry, seen_domains, use_color)
+                        if formatted is None:
+                            continue
+                        event_key, line = formatted
 
-            connection_lifetime = time.monotonic() - connected_at
-            if connection_lifetime >= stable_reset_seconds:
-                reconnect_delay = 2.0
-            else:
+                        if pending_key is None:
+                            pending_key = event_key
+                            pending_line = line
+                            pending_count = 1
+                            continue
+
+                        if event_key == pending_key:
+                            pending_count += 1
+                            continue
+
+                        if pending_line is not None:
+                            print_buffered_line(pending_line, pending_count)
+                        pending_key = event_key
+                        pending_line = line
+                        pending_count = 1
+
+                connection_lifetime = time.monotonic() - connected_at
+                if pending_line is not None:
+                    print_buffered_line(pending_line, pending_count)
+                    pending_key = None
+                    pending_line = None
+                    pending_count = 0
+                if connection_lifetime >= stable_reset_seconds:
+                    reconnect_delay = 2.0
+                else:
+                    reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+
+                sys.stderr.write("\r[stream] disconnected, reconnecting...\n")
+                sys.stderr.flush()
+                time.sleep(reconnect_delay + random.uniform(0, 1.0))
+            except KeyboardInterrupt:
+                if pending_line is not None:
+                    print_buffered_line(pending_line, pending_count)
+                raise
+            except RateLimitError as exc:
+                if pending_line is not None:
+                    print_buffered_line(pending_line, pending_count)
+                    pending_key = None
+                    pending_line = None
+                    pending_count = 0
+                base = (
+                    exc.retry_after if exc.retry_after is not None else reconnect_delay
+                )
+                sleep_for = max(base, reconnect_delay, 5.0)
+                sleep_for = min(sleep_for, max_reconnect_delay)
+                sys.stderr.write(
+                    f"\r[stream] rate limited; retrying in {sleep_for:.1f}s\n"
+                )
+                sys.stderr.flush()
+                time.sleep(sleep_for + random.uniform(0, 1.0))
+                reconnect_delay = min(
+                    max(reconnect_delay * 2, sleep_for), max_reconnect_delay
+                )
+            except Exception as exc:
+                if pending_line is not None:
+                    print_buffered_line(pending_line, pending_count)
+                    pending_key = None
+                    pending_line = None
+                    pending_count = 0
+                sys.stderr.write(
+                    f"\r[stream] error: {exc}; retrying in {reconnect_delay:.1f}s\n"
+                )
+                sys.stderr.flush()
+                time.sleep(reconnect_delay + random.uniform(0, 1.0))
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
-
-            sys.stderr.write("\r[stream] disconnected, reconnecting...\n")
-            sys.stderr.flush()
-            time.sleep(reconnect_delay + random.uniform(0, 1.0))
-        except KeyboardInterrupt:
-            raise
-        except RateLimitError as exc:
-            base = exc.retry_after if exc.retry_after is not None else reconnect_delay
-            sleep_for = max(base, reconnect_delay, 5.0)
-            sleep_for = min(sleep_for, max_reconnect_delay)
-            sys.stderr.write(
-                f"\r[stream] rate limited; retrying in {sleep_for:.1f}s\n"
-            )
-            sys.stderr.flush()
-            time.sleep(sleep_for + random.uniform(0, 1.0))
-            reconnect_delay = min(max(reconnect_delay * 2, sleep_for), max_reconnect_delay)
-        except Exception as exc:
-            sys.stderr.write(
-                f"\r[stream] error: {exc}; retrying in {reconnect_delay:.1f}s\n"
-            )
-            sys.stderr.flush()
-            time.sleep(reconnect_delay + random.uniform(0, 1.0))
-            reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
 
 def main() -> int:
