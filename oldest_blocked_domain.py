@@ -7,11 +7,7 @@ import argparse
 import sys
 from typing import Dict, Optional
 
-import requests
-
-from nextdns_common import resolve_api_key
-
-API_BASE = "https://api.nextdns.io"
+from nextdns_api import NextDNSClient
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,8 +46,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def fetch_oldest_blocked(
+    client: NextDNSClient,
     profile_id: str,
-    api_key: str,
     from_time: Optional[str],
     to_time: Optional[str],
     device: Optional[str],
@@ -71,17 +67,7 @@ def fetch_oldest_blocked(
     if raw:
         params["raw"] = "1"
 
-    url = f"{API_BASE}/profiles/{profile_id}/logs"
-    resp = requests.get(url, headers={"X-Api-Key": api_key}, params=params, timeout=30)
-
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
-        )
-
-    payload = resp.json()
-    if payload.get("errors"):
-        raise RuntimeError(f"API returned errors: {payload['errors']}")
+    payload = client.request_json("GET", f"/profiles/{profile_id}/logs", params=params)
 
     data = payload.get("data", [])
     if not data:
@@ -93,15 +79,15 @@ def main() -> int:
     args = parse_args()
 
     try:
-        api_key = resolve_api_key(args.api_key)
-        entry = fetch_oldest_blocked(
-            profile_id=args.profile,
-            api_key=api_key,
-            from_time=args.from_time,
-            to_time=args.to_time,
-            device=args.device,
-            raw=args.raw,
-        )
+        with NextDNSClient.from_cli_api_key(args.api_key) as client:
+            entry = fetch_oldest_blocked(
+                client=client,
+                profile_id=args.profile,
+                from_time=args.from_time,
+                to_time=args.to_time,
+                device=args.device,
+                raw=args.raw,
+            )
 
         if entry is None:
             print("No blocked log entries found for the selected scope.")

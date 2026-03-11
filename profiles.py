@@ -7,10 +7,7 @@ import argparse
 import sys
 from typing import Dict, List
 
-import requests
-from nextdns_common import resolve_api_key
-
-API_BASE = "https://api.nextdns.io"
+from nextdns_api import NextDNSClient
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,21 +17,6 @@ def parse_args() -> argparse.Namespace:
         help="NextDNS API key (overrides env/config)",
     )
     return parser.parse_args()
-
-
-def fetch_profiles(api_key: str) -> List[Dict]:
-    headers = {"X-Api-Key": api_key}
-    resp = requests.get(f"{API_BASE}/profiles", headers=headers, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
-        )
-
-    payload = resp.json()
-    if payload.get("errors"):
-        raise RuntimeError(f"API returned errors: {payload['errors']}")
-
-    return payload.get("data", [])
 
 
 def print_profiles(profiles: List[Dict]) -> None:
@@ -58,8 +40,8 @@ def main() -> int:
     args = parse_args()
 
     try:
-        api_key = resolve_api_key(args.api_key)
-        profiles = fetch_profiles(api_key=api_key)
+        with NextDNSClient.from_cli_api_key(args.api_key) as client:
+            profiles = client.list_profiles()
         print_profiles(profiles)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)

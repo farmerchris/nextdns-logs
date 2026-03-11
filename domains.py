@@ -10,10 +10,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import requests
-from nextdns_common import resolve_api_key
+from nextdns_api import NextDNSClient
 
-API_BASE = "https://api.nextdns.io"
 RELATIVE_TIME_RE = re.compile(r"^\d+(?:[smhdwMy])$")
 NEGATIVE_RELATIVE_TIME_RE = re.compile(r"^-\d+(?:[smhdwMy])$")
 DEFAULT_COLLAPSE_RULES_PATH = Path(__file__).with_name("collapse_rules.json")
@@ -102,24 +100,9 @@ def normalize_window_value(value: str) -> str:
     return normalized
 
 
-def list_profiles(api_key: str) -> List[Dict]:
-    resp = requests.get(
-        f"{API_BASE}/profiles", headers={"X-Api-Key": api_key}, timeout=30
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
-        )
-
-    payload = resp.json()
-    if payload.get("errors"):
-        raise RuntimeError(f"API returned errors: {payload['errors']}")
-    return payload.get("data", [])
-
-
 def fetch_domains(
+    client: NextDNSClient,
     profile_id: str,
-    api_key: str,
     from_time: str,
     to_time: str,
     limit: int,
@@ -128,14 +111,6 @@ def fetch_domains(
     output_status: str,
     progress_label: Optional[str] = None,
 ) -> List[Dict]:
-    if not (1 <= limit <= 500):
-        raise ValueError("--limit must be between 1 and 500")
-
-    headers = {"X-Api-Key": api_key}
-    cursor: Optional[str] = None
-    rows: List[Dict] = []
-    page = 0
-
     def progress_update(message: str, *, done: bool = False) -> None:
         if not progress_label:
             return
@@ -144,45 +119,17 @@ def fetch_domains(
             sys.stderr.write("\n")
         sys.stderr.flush()
 
-    progress_update(f"querying {from_time} -> {to_time}")
-
-    while True:
-        page += 1
-        params = {
-            "status": api_status,
-            "from": from_time,
-            "to": to_time,
-            "limit": limit,
-        }
-        if root:
-            params["root"] = "1"
-        if cursor:
-            params["cursor"] = cursor
-
-        url = f"{API_BASE}/profiles/{profile_id}/analytics/domains"
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"HTTP {resp.status_code} from NextDNS API: {resp.text.strip()}"
-            )
-
-        payload = resp.json()
-        if payload.get("errors"):
-            raise RuntimeError(f"API returned errors: {payload['errors']}")
-
-        data = payload.get("data", [])
-        for row in data:
-            row["status"] = output_status
-        rows.extend(data)
-        progress_update(f"page {page}, got {len(data)} rows, total {len(rows)}")
-
-        cursor = payload.get("meta", {}).get("pagination", {}).get("cursor")
-        if not cursor:
-            break
-
-    rows.sort(key=lambda item: item.get("queries", 0), reverse=True)
-    progress_update(f"done ({len(rows)} rows)", done=True)
+    rows = client.analytics_domains(
+        profile_id=profile_id,
+        from_time=from_time,
+        to_time=to_time,
+        status=api_status,
+        limit=limit,
+        root=root,
+        progress=progress_update,
+    )
+    for row in rows:
+        row["status"] = output_status
     return rows
 
 
@@ -307,8 +254,8 @@ def collapse_rows(rows: List[Dict], rules: List[re.Pattern[str]]) -> List[Dict]:
 
 
 def find_new_domains(
+    client: NextDNSClient,
     profile_id: str,
-    api_key: str,
     limit: int,
     root: bool,
     from_time: str,
@@ -325,8 +272,8 @@ def find_new_domains(
         output_status = query["output_status"]
         recent_rows.extend(
             fetch_domains(
+                client=client,
                 profile_id=profile_id,
-                api_key=api_key,
                 from_time=recent_from,
                 to_time="now",
                 limit=limit,
@@ -338,8 +285,8 @@ def find_new_domains(
         )
         baseline_rows.extend(
             fetch_domains(
+                client=client,
                 profile_id=profile_id,
-                api_key=api_key,
                 from_time=from_time,
                 to_time=recent_from,
                 limit=limit,
@@ -371,7 +318,6 @@ def main() -> int:
         from_time = normalize_time_value(args.from_time)
         to_time = normalize_time_value(args.to_time)
         new_window = normalize_window_value(args.new) if args.new is not None else None
-        api_key = resolve_api_key(args.api_key)
         use_color = sys.stdout.isatty()
         status_queries: List[Dict[str, str]]
         if args.blocked and not args.allowed:
@@ -399,71 +345,72 @@ def main() -> int:
         if not args.no_collapse:
             collapse_rules = load_collapse_rules(args.collapse_rules)
 
-        if args.profile:
-            targets = [{"id": args.profile, "name": ""}]
-        else:
-            targets = list_profiles(api_key)
-            targets = [
-                {"id": p.get("id", ""), "name": p.get("name", "")} for p in targets
-            ]
-            targets = [t for t in targets if t["id"]]
-
-        if not targets:
-            print("No profiles found.")
-            return 0
-
-        for idx, target in enumerate(targets, start=1):
-            profile_id = target["id"]
-            profile_name = target.get("name", "")
-            if len(targets) > 1:
-                header = f"Profile {idx}/{len(targets)}: {profile_id}"
-                if profile_name:
-                    header += f" ({profile_name})"
-                print(header)
-
-            if new_window is not None:
-                rows = find_new_domains(
-                    profile_id=profile_id,
-                    api_key=api_key,
-                    limit=args.limit,
-                    root=args.root,
-                    from_time=from_time,
-                    new_window=new_window,
-                    status_queries=status_queries,
-                    collapse_rules=collapse_rules,
-                    progress_prefix=f"({profile_id}) ",
-                )
-                window_label = new_window.lstrip("-")
-                print_table(
-                    rows,
-                    new_window,
-                    "now",
-                    f"New {status_label.lower()} in last {window_label} (baseline from {from_time})",
-                    use_color,
-                )
+        with NextDNSClient.from_cli_api_key(args.api_key) as client:
+            if args.profile:
+                targets = [{"id": args.profile, "name": ""}]
             else:
-                rows: List[Dict] = []
-                for query in status_queries:
-                    api_status = query["api_status"]
-                    output_status = query["output_status"]
-                    rows.extend(
-                        fetch_domains(
-                            profile_id=profile_id,
-                            api_key=api_key,
-                            from_time=from_time,
-                            to_time=to_time,
-                            limit=args.limit,
-                            root=args.root,
-                            api_status=api_status,
-                            output_status=output_status,
-                            progress_label=f"main window ({profile_id}) [{api_status}]",
-                        )
-                    )
-                rows = collapse_rows(rows, collapse_rules)
-                print_table(rows, from_time, to_time, status_label, use_color)
+                targets = client.list_profiles()
+                targets = [
+                    {"id": p.get("id", ""), "name": p.get("name", "")} for p in targets
+                ]
+                targets = [t for t in targets if t["id"]]
 
-            if idx < len(targets):
-                print()
+            if not targets:
+                print("No profiles found.")
+                return 0
+
+            for idx, target in enumerate(targets, start=1):
+                profile_id = target["id"]
+                profile_name = target.get("name", "")
+                if len(targets) > 1:
+                    header = f"Profile {idx}/{len(targets)}: {profile_id}"
+                    if profile_name:
+                        header += f" ({profile_name})"
+                    print(header)
+
+                if new_window is not None:
+                    rows = find_new_domains(
+                        client=client,
+                        profile_id=profile_id,
+                        limit=args.limit,
+                        root=args.root,
+                        from_time=from_time,
+                        new_window=new_window,
+                        status_queries=status_queries,
+                        collapse_rules=collapse_rules,
+                        progress_prefix=f"({profile_id}) ",
+                    )
+                    window_label = new_window.lstrip("-")
+                    print_table(
+                        rows,
+                        new_window,
+                        "now",
+                        f"New {status_label.lower()} in last {window_label} (baseline from {from_time})",
+                        use_color,
+                    )
+                else:
+                    rows: List[Dict] = []
+                    for query in status_queries:
+                        api_status = query["api_status"]
+                        output_status = query["output_status"]
+                        rows.extend(
+                            fetch_domains(
+                                client=client,
+                                profile_id=profile_id,
+                                from_time=from_time,
+                                to_time=to_time,
+                                limit=args.limit,
+                                root=args.root,
+                                api_status=api_status,
+                                output_status=output_status,
+                                progress_label=f"main window ({profile_id}) [{api_status}]",
+                            )
+                        )
+                    rows = collapse_rows(rows, collapse_rules)
+                    print_table(rows, from_time, to_time, status_label, use_color)
+
+                if idx < len(targets):
+                    print()
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
