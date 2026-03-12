@@ -11,6 +11,12 @@ Small Python CLI tools for querying and managing NextDNS data.
 pip install -r requirements.txt
 ```
 
+For tests:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## API key setup
 
 All scripts use this API key resolution order:
@@ -131,6 +137,7 @@ Stream live allowed/blocked domains for a profile until Ctrl+C.
 - Marks first-seen domains in current session with `NEW`
 - Prints device info when available
 - Auto reconnect on stream interruption
+- Applies collapse rules by default (same as `domains.py`)
 
 ```bash
 ./stream_domains.py --profile abc123
@@ -141,6 +148,16 @@ Options:
 ```bash
 ./stream_domains.py --profile abc123 --id LAST_EVENT_ID
 ./stream_domains.py --profile abc123 --no-color
+./stream_domains.py --profile abc123 --no-collapse
+./stream_domains.py --profile abc123 --collapse-rules ./collapse_rules.json
+```
+
+## Tests
+
+Run all tests with:
+
+```bash
+pytest -q
 ```
 
 ## Collapse rules
