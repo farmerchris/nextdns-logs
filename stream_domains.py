@@ -9,11 +9,16 @@ import random
 import sys
 import time
 from datetime import datetime
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Pattern
 
 import requests
 
 from nextdns_api import NextDNSAPIError, NextDNSClient
+from nextdns_common import (
+    DEFAULT_COLLAPSE_RULES_PATH,
+    collapse_domain,
+    load_collapse_rules,
+)
 
 ANSI_RESET = "\033[0m"
 ANSI_RED = "\033[31m"
@@ -57,6 +62,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable ANSI colors",
     )
+    parser.add_argument(
+        "--no-collapse",
+        action="store_true",
+        help="Disable domain collapsing",
+    )
+    parser.add_argument(
+        "--collapse-rules",
+        default=str(DEFAULT_COLLAPSE_RULES_PATH),
+        help=f"Path to collapse rules JSON. Default: {DEFAULT_COLLAPSE_RULES_PATH}",
+    )
     return parser.parse_args()
 
 
@@ -96,13 +111,14 @@ def format_timestamp(ts: str) -> str:
 
 
 def format_event(
-    entry: Dict, seen_domains: set[str], use_color: bool
+    entry: Dict, seen_domains: set[str], use_color: bool, collapse_rules: List[Pattern[str]]
 ) -> Optional[tuple[tuple[str, str, str], str]]:
     status = entry.get("status", "")
     if status not in {"default", "allowed", "blocked"}:
         return None
 
     domain = entry.get("domain", "")
+    display_domain = collapse_domain(domain, collapse_rules)
     timestamp = format_timestamp(entry.get("timestamp", ""))
     device = ""
     if isinstance(entry.get("device"), dict):
@@ -117,8 +133,8 @@ def format_event(
         elif device_model:
             device = device_model
 
-    is_new = domain not in seen_domains
-    seen_domains.add(domain)
+    is_new = display_domain not in seen_domains
+    seen_domains.add(display_domain)
 
     if status == "blocked":
         status_label = "BLOCKED"
@@ -131,7 +147,7 @@ def format_event(
     parts = [
         colorize(timestamp, ANSI_CYAN, use_color),
         colorize(status_label, status_color, use_color),
-        domain,
+        display_domain,
     ]
     if device:
         parts.append(colorize(f"device={device}", ANSI_DIM, use_color))
@@ -139,7 +155,7 @@ def format_event(
         parts.append(colorize("NEW", ANSI_YELLOW, use_color))
 
     line = " | ".join(part for part in parts if part)
-    event_key = (status_label, domain, device)
+    event_key = (status_label, display_domain, device)
     return event_key, line
 
 
@@ -181,6 +197,7 @@ def stream_loop(
     profile_id: str,
     last_id: Optional[str],
     use_color: bool,
+    collapse_rules: List[Pattern[str]],
 ) -> None:
     seen_domains: set[str] = set()
     pending_key: Optional[tuple[str, str, str]] = None
@@ -211,7 +228,9 @@ def stream_loop(
                     except json.JSONDecodeError:
                         continue
 
-                    formatted = format_event(entry, seen_domains, use_color)
+                    formatted = format_event(
+                        entry, seen_domains, use_color, collapse_rules
+                    )
                     if formatted is None:
                         continue
                     event_key, line = formatted
@@ -295,12 +314,16 @@ def main() -> int:
 
     try:
         use_color = (not args.no_color) and sys.stdout.isatty()
+        collapse_rules: List[Pattern[str]] = []
+        if not args.no_collapse:
+            collapse_rules = load_collapse_rules(args.collapse_rules)
         with NextDNSClient.from_cli_api_key(args.api_key) as client:
             stream_loop(
                 client=client,
                 profile_id=args.profile,
                 last_id=args.last_id,
                 use_color=use_color,
+                collapse_rules=collapse_rules,
             )
     except KeyboardInterrupt:
         sys.stderr.write("\nStopped.\n")

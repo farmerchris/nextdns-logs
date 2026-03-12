@@ -4,17 +4,19 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from nextdns_api import NextDNSClient
+from nextdns_common import (
+    DEFAULT_COLLAPSE_RULES_PATH,
+    collapse_domain,
+    load_collapse_rules,
+)
 
 RELATIVE_TIME_RE = re.compile(r"^\d+(?:[smhdwMy])$")
 NEGATIVE_RELATIVE_TIME_RE = re.compile(r"^-\d+(?:[smhdwMy])$")
-DEFAULT_COLLAPSE_RULES_PATH = Path(__file__).with_name("collapse_rules.json")
 ANSI_RESET = "\033[0m"
 ANSI_RED = "\033[31m"
 ANSI_GREEN = "\033[32m"
@@ -166,70 +168,6 @@ def print_table(
         print(
             f"{idx:>4}  {queries:>10}  {status_text(status, use_color):<8}  {domain:<{domain_col}}"
         )
-
-
-def load_collapse_rules(path: str) -> List[re.Pattern[str]]:
-    rules_path = Path(path).expanduser()
-    if not rules_path.exists():
-        return []
-
-    try:
-        data = json.loads(rules_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Invalid collapse rules JSON at {rules_path}: {exc}"
-        ) from exc
-
-    raw_rules = data.get("rules", [])
-    if not isinstance(raw_rules, list):
-        raise RuntimeError(
-            f"Invalid collapse rules format in {rules_path}: 'rules' must be a list"
-        )
-
-    compiled: List[re.Pattern[str]] = []
-    for idx, rule in enumerate(raw_rules, start=1):
-        if not isinstance(rule, dict):
-            raise RuntimeError(f"Invalid rule #{idx} in {rules_path}: expected object")
-        pattern = rule.get("pattern")
-        if not isinstance(pattern, str):
-            raise RuntimeError(
-                f"Invalid rule #{idx} in {rules_path}: 'pattern' must be a string"
-            )
-        if "replacement" in rule:
-            raise RuntimeError(
-                f"Invalid rule #{idx} in {rules_path}: 'replacement' is not supported; "
-                "use capture groups and implicit '*' replacement"
-            )
-        try:
-            regex = re.compile(pattern)
-        except re.error as exc:
-            raise RuntimeError(
-                f"Invalid regex in rule #{idx} ({rules_path}): {exc}"
-            ) from exc
-        if regex.groups < 1:
-            raise RuntimeError(
-                f"Invalid rule #{idx} in {rules_path}: pattern must include at least one capture group"
-            )
-        compiled.append(regex)
-
-    return compiled
-
-
-def collapse_domain(domain: str, rules: List[re.Pattern[str]]) -> str:
-    for pattern in rules:
-        match = pattern.search(domain)
-        if not match:
-            continue
-
-        collapsed = domain
-        for group_index in range(match.lastindex or 0, 0, -1):
-            span = match.span(group_index)
-            if span == (-1, -1):
-                continue
-            start, end = span
-            collapsed = collapsed[:start] + "*" + collapsed[end:]
-        return collapsed
-    return domain
 
 
 def collapse_rows(rows: List[Dict], rules: List[re.Pattern[str]]) -> List[Dict]:
