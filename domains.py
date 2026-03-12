@@ -172,7 +172,9 @@ def print_table(
 
 def collapse_rows(rows: List[Dict], rules: List[re.Pattern[str]]) -> List[Dict]:
     if not rules:
-        return rows
+        sorted_rows = list(rows)
+        sorted_rows.sort(key=lambda item: item.get("queries", 0), reverse=True)
+        return sorted_rows
 
     totals: Dict[tuple[str, str], int] = {}
     for row in rows:
