@@ -87,7 +87,11 @@ def test_request_non_200_raises_with_errors() -> None:
 
 def test_request_json_invalid_json_raises() -> None:
     session = FakeSession(
-        [FakeResponse(status_code=200, text="not-json", json_error=ValueError("bad json"))]
+        [
+            FakeResponse(
+                status_code=200, text="not-json", json_error=ValueError("bad json")
+            )
+        ]
     )
     client = nextdns_api.NextDNSClient("k", session=session)
 
@@ -130,7 +134,10 @@ def test_analytics_domains_sorts_and_reports_progress() -> None:
                 }
             ),
             FakeResponse(
-                payload={"data": [{"domain": "b", "queries": 9}], "meta": {"pagination": {}}}
+                payload={
+                    "data": [{"domain": "b", "queries": 9}],
+                    "meta": {"pagination": {}},
+                }
             ),
         ]
     )

@@ -111,7 +111,10 @@ def format_timestamp(ts: str) -> str:
 
 
 def format_event(
-    entry: Dict, seen_domains: set[str], use_color: bool, collapse_rules: List[Pattern[str]]
+    entry: Dict,
+    seen_domains: set[str],
+    use_color: bool,
+    collapse_rules: List[Pattern[str]],
 ) -> Optional[tuple[tuple[str, str, str], str]]:
     status = entry.get("status", "")
     if status not in {"default", "allowed", "blocked"}:

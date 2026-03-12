@@ -11,7 +11,9 @@ import pytest
 import nextdns_common
 
 
-def test_get_config_path_uses_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_get_config_path_uses_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = tmp_path / "custom-config.json"
     monkeypatch.setenv(nextdns_common.CONFIG_ENV_VAR, str(cfg))
     assert nextdns_common.get_config_path() == cfg
@@ -31,7 +33,9 @@ def test_load_and_save_config_roundtrip(
 
 
 def test_resolve_api_key_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nextdns_common, "load_config", lambda: {"api_key": "from-config"})
+    monkeypatch.setattr(
+        nextdns_common, "load_config", lambda: {"api_key": "from-config"}
+    )
 
     assert nextdns_common.resolve_api_key("from-cli") == "from-cli"
     monkeypatch.setenv(nextdns_common.API_KEY_ENV_VAR, "from-env")
@@ -40,7 +44,9 @@ def test_resolve_api_key_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     assert nextdns_common.resolve_api_key(None) == "from-config"
 
 
-def test_resolve_api_key_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_api_key_missing_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     cfg = tmp_path / "missing-config.json"
     monkeypatch.setenv(nextdns_common.CONFIG_ENV_VAR, str(cfg))
     monkeypatch.delenv(nextdns_common.API_KEY_ENV_VAR, raising=False)
@@ -53,7 +59,9 @@ def test_resolve_api_key_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_pat
 def test_load_collapse_rules_and_collapse_domain(tmp_path: Path) -> None:
     rules_path = tmp_path / "collapse_rules.json"
     rules_path.write_text(
-        json.dumps({"rules": [{"pattern": r"^foo([0-9]+)\.bar([0-9]+)\.example\.com$"}]}),
+        json.dumps(
+            {"rules": [{"pattern": r"^foo([0-9]+)\.bar([0-9]+)\.example\.com$"}]}
+        ),
         encoding="utf-8",
     )
     rules = nextdns_common.load_collapse_rules(str(rules_path))

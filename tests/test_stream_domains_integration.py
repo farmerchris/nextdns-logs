@@ -39,7 +39,9 @@ class FakeStreamClient:
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def get_stream(self, path: str, *, params=None, timeout: int = 90) -> FakeStreamResponse:
+    def get_stream(
+        self, path: str, *, params=None, timeout: int = 90
+    ) -> FakeStreamResponse:
         _ = (path, params, timeout)
         return FakeStreamResponse(self._lines)
 
@@ -75,23 +77,20 @@ def test_stream_default_collapse_dedupes_collapsed_domains(
         json.dumps({"rules": [{"pattern": r"foo([0-9]+)\.example\.com$"}]}),
         encoding="utf-8",
     )
-    lines = (
-        make_event(
-            "1",
-            {
-                "status": "blocked",
-                "domain": "foo123.example.com",
-                "timestamp": "2026-03-12T00:00:00Z",
-            },
-        )
-        + make_event(
-            "2",
-            {
-                "status": "blocked",
-                "domain": "foo999.example.com",
-                "timestamp": "2026-03-12T00:00:01Z",
-            },
-        )
+    lines = make_event(
+        "1",
+        {
+            "status": "blocked",
+            "domain": "foo123.example.com",
+            "timestamp": "2026-03-12T00:00:00Z",
+        },
+    ) + make_event(
+        "2",
+        {
+            "status": "blocked",
+            "domain": "foo999.example.com",
+            "timestamp": "2026-03-12T00:00:01Z",
+        },
     )
     client = FakeStreamClient(lines)
     rc, out, _ = run_stream_main(
@@ -116,23 +115,20 @@ def test_stream_no_collapse_keeps_distinct_domains(
         json.dumps({"rules": [{"pattern": r"foo([0-9]+)\.example\.com$"}]}),
         encoding="utf-8",
     )
-    lines = (
-        make_event(
-            "1",
-            {
-                "status": "blocked",
-                "domain": "foo123.example.com",
-                "timestamp": "2026-03-12T00:00:00Z",
-            },
-        )
-        + make_event(
-            "2",
-            {
-                "status": "blocked",
-                "domain": "foo999.example.com",
-                "timestamp": "2026-03-12T00:00:01Z",
-            },
-        )
+    lines = make_event(
+        "1",
+        {
+            "status": "blocked",
+            "domain": "foo123.example.com",
+            "timestamp": "2026-03-12T00:00:00Z",
+        },
+    ) + make_event(
+        "2",
+        {
+            "status": "blocked",
+            "domain": "foo999.example.com",
+            "timestamp": "2026-03-12T00:00:01Z",
+        },
     )
     client = FakeStreamClient(lines)
     rc, out, _ = run_stream_main(

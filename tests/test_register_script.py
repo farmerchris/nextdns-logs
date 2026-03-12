@@ -20,8 +20,12 @@ def run_main(
     return rc, out, err
 
 
-def test_show_path(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(register, "get_config_path", lambda: Path("/tmp/fake-config.json"))
+def test_show_path(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        register, "get_config_path", lambda: Path("/tmp/fake-config.json")
+    )
     rc, out, err = run_main(monkeypatch, capsys, ["--show-path"])
     assert rc == 0
     assert "/tmp/fake-config.json" in out

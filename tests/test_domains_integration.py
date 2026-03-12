@@ -115,7 +115,9 @@ def test_no_collapse_still_sorts_by_queries_desc(
     )
 
     assert rc == 0
-    data_lines = [line for line in out.splitlines() if re.match(r"^\s*\d+\s+\d+\s+", line)]
+    data_lines = [
+        line for line in out.splitlines() if re.match(r"^\s*\d+\s+\d+\s+", line)
+    ]
     queries = [int(line.split()[1]) for line in data_lines]
     assert queries == sorted(queries, reverse=True)
     assert "high.example.com" in data_lines[0]

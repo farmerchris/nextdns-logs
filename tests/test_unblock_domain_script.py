@@ -65,11 +65,17 @@ def run_main(
 
 def test_unblock_on_profile_adds_allow_and_removes_deny() -> None:
     client = FakeUnblockClient(allowlist=[], denylist=[{"id": "example.com"}])
-    changed, actions = unblock_domain.unblock_on_profile(client, "p1", "example.com", False)
+    changed, actions = unblock_domain.unblock_on_profile(
+        client, "p1", "example.com", False
+    )
     assert changed is True
     assert "add allowlist entry" in actions
     assert "remove denylist entry" in actions
-    assert ("POST", "/profiles/p1/allowlist", {"id": "example.com", "active": True}) in client.calls
+    assert (
+        "POST",
+        "/profiles/p1/allowlist",
+        {"id": "example.com", "active": True},
+    ) in client.calls
     assert (
         "DELETE",
         "/profiles/p1/denylist/example.com",
@@ -78,16 +84,28 @@ def test_unblock_on_profile_adds_allow_and_removes_deny() -> None:
 
 
 def test_unblock_on_profile_activates_allow_when_inactive() -> None:
-    client = FakeUnblockClient(allowlist=[{"id": "example.com", "active": False}], denylist=[])
-    changed, actions = unblock_domain.unblock_on_profile(client, "p1", "example.com", False)
+    client = FakeUnblockClient(
+        allowlist=[{"id": "example.com", "active": False}], denylist=[]
+    )
+    changed, actions = unblock_domain.unblock_on_profile(
+        client, "p1", "example.com", False
+    )
     assert changed is True
     assert "activate allowlist entry" in actions
-    assert ("PATCH", "/profiles/p1/allowlist/example.com", {"active": True}) in client.calls
+    assert (
+        "PATCH",
+        "/profiles/p1/allowlist/example.com",
+        {"active": True},
+    ) in client.calls
 
 
 def test_unblock_on_profile_no_changes() -> None:
-    client = FakeUnblockClient(allowlist=[{"id": "example.com", "active": True}], denylist=[])
-    changed, actions = unblock_domain.unblock_on_profile(client, "p1", "example.com", False)
+    client = FakeUnblockClient(
+        allowlist=[{"id": "example.com", "active": True}], denylist=[]
+    )
+    changed, actions = unblock_domain.unblock_on_profile(
+        client, "p1", "example.com", False
+    )
     assert changed is False
     assert "allowlist already active" in actions
     assert "not present in denylist" in actions

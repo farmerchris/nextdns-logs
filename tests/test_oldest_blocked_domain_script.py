@@ -11,7 +11,9 @@ import oldest_blocked_domain
 
 
 class FakeOldestClient:
-    def __init__(self, payload: dict | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self, payload: dict | None = None, error: Exception | None = None
+    ) -> None:
         self.payload = payload if payload is not None else {"data": []}
         self.error = error
         self.calls: list[tuple[str, str, dict]] = []
@@ -92,7 +94,9 @@ def test_main_prints_entry(
             }
         ]
     }
-    rc, out, err = run_main(monkeypatch, capsys, ["--profile", "p1"], FakeOldestClient(payload))
+    rc, out, err = run_main(
+        monkeypatch, capsys, ["--profile", "p1"], FakeOldestClient(payload)
+    )
     assert rc == 0
     assert "bad.example.com" in out
     assert "Laptop" in out
